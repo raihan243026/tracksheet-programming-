@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Programming Tracksheet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .theme-dark-red {
+            --bg-primary: #1a0a0a;
+            --bg-secondary: #2d1414;
+            --bg-accent: #4a1f1f;
+            --text-primary: #ffffff;
+            --text-secondary: #e5e5e5;
+            --accent-color: #dc2626;
+            --border-color: #4a1f1f;
+        }
+        
+        .theme-black {
+            --bg-primary: #000000;
+            --bg-secondary: #1a1a1a;
+            --bg-accent: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #e5e5e5;
+            --accent-color: #3b82f6;
+            --border-color: #374151;
+        }
+        
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+        }
+        
+        .bg-primary { background-color: var(--bg-primary); }
+        .bg-secondary { background-color: var(--bg-secondary); }
+        .bg-accent { background-color: var(--bg-accent); }
+        .text-primary { color: var(--text-primary); }
+        .text-secondary { color: var(--text-secondary); }
+        .accent-color { color: var(--accent-color); }
+        .border-custom { border-color: var(--border-color); }
+        
+        .timer-display {
+            font-family: 'Courier New', monospace;
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        
+        .clock-display {
+            font-family: 'Courier New', monospace;
+            font-size: 1.5rem;
+        }
+        
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            background-color: var(--bg-accent);
+            transform: translateY(-2px);
+        }
+        
+        .btn-primary {
+            background-color: var(--accent-color);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            opacity: 0.8;
+            transform: translateY(-1px);
+        }
+        
+        .input-field {
+            background-color: var(--bg-accent);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            width: 100%;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .modal {
+            display: none;
+        }
+
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(5px);
+        }
+    </style>
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        setLogLevel('debug');
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        let app, db, auth, userId;
+
+        function initializeFirebase() {
+            try {
+                if (firebaseConfig && Object.keys(firebaseConfig).length > 0) {
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+                    console.log("Firebase initialized.");
+                    setupAuthListener();
+                } else {
+                    console.error("Firebase config is missing.");
+                    document.getElementById('status').textContent = "Error: Firebase configuration is missing. Data persistence will not work.";
+                }
+            } catch (e) {
+                console.error("Error initializing Firebase:", e);
+                document.getElementById('status').textContent = "Error initializing Firebase. Check the console for details.";
+            }
+        }
+
+        function setupAuthListener() {
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    document.getElementById('userIdDisplay').textContent = userId;
+                    console.log("User signed in with UID:", userId);
+                    loadData(userId);
+                } else {
+                    try {
+                        const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        if (token) {
+                            await signInWithCustomToken(auth, token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        console.error("Authentication failed:", e);
+                        document.getElementById('status').textContent = "Error: Authentication failed. Data persistence will not work.";
+                    }
+                }
+            });
+        }
+
+        function getCollectionPath(collectionName) {
+            return `artifacts/${appId}/users/${userId}/${collectionName}`;
+        }
+        
+        async function loadData(uid) {
+            // Load projects
+            onSnapshot(collection(db, getCollectionPath('projects')), (snapshot) => {
+                const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderProjects(projects);
+                renderTimeLog(null); // Clear log for now to rebuild
+                renderDailyProgress(projects);
+            });
+
+            // Load goals
+            onSnapshot(collection(db, getCollectionPath('goals')), (snapshot) => {
+                const goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderGoals(goals);
+            });
+
+            // Load time logs (for history)
+            onSnapshot(collection(db, getCollectionPath('timeLogs')), (snapshot) => {
+                const timeLogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderTimeLog(timeLogs);
+            });
+        }
+
+        let projectsData = [];
+        let goalsData = [];
+        let timeLogsData = [];
+
+        window.renderProjects = function(projects) {
+            projectsData = projects;
+            const container = document.getElementById('currentProjects');
+            const datalist = document.getElementById('projectList');
+            container.innerHTML = '';
+            datalist.innerHTML = '';
+            if (projects.length === 0) {
+                container.innerHTML = `<p class="text-secondary text-center">No projects yet. Add one to get started!</p>`;
+                return;
+            }
+            projects.forEach(project => {
+                const projectEl = document.createElement('div');
+                projectEl.className = 'mb-3 p-3 bg-accent rounded flex items-center justify-between';
+                projectEl.innerHTML = `
+                    <div>
+                        <div class="font-semibold">${project.name}</div>
+                        <div class="text-sm text-secondary mt-1">${project.language || 'Mixed'}</div>
+                    </div>
+                    <div class="text-sm text-secondary">${formatTime(project.totalTime || 0)}</div>
+                `;
+                container.appendChild(projectEl);
+
+                const option = document.createElement('option');
+                option.value = project.name;
+                datalist.appendChild(option);
+            });
+        }
+
+        window.renderGoals = function(goals) {
+            goalsData = goals;
+            const container = document.getElementById('learningGoals');
+            container.innerHTML = '';
+            if (goals.length === 0) {
+                container.innerHTML = `<p class="text-secondary text-center">No goals set. Add one!</p>`;
+                return;
+            }
+            goals.forEach(goal => {
+                const goalEl = document.createElement('div');
+                goalEl.className = 'flex items-center';
+                goalEl.innerHTML = `
+                    <input type="checkbox" class="mr-3" ${goal.completed ? 'checked' : ''} onchange="toggleGoalCompletion('${goal.id}', ${!goal.completed})">
+                    <span class="${goal.completed ? 'line-through text-secondary' : ''}">${goal.text}</span>
+                    <button onclick="deleteGoal('${goal.id}')" class="ml-auto text-red-500 hover:text-red-700"><i class="fas fa-trash-alt"></i></button>
+                `;
+                container.appendChild(goalEl);
+            });
+        }
+
+        window.renderTimeLog = function(logs) {
+            if (!logs) return;
+            timeLogsData = logs;
+            const tableBody = document.getElementById('timeLog');
+            tableBody.innerHTML = '';
+            if (logs.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-secondary">No time logged yet.</td></tr>`;
+                return;
+            }
+            logs.sort((a, b) => b.date - a.date);
+            logs.forEach(log => {
+                const row = document.createElement('tr');
+                row.className = 'border-b border-custom';
+                const date = new Date(log.date);
+                row.innerHTML = `
+                    <td class="p-2">${log.projectName}</td>
+                    <td class="p-2">${log.language}</td>
+                    <td class="p-2">${formatTime(log.duration)}</td>
+                    <td class="p-2">${date.toLocaleDateString()}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+        
+        window.renderDailyProgress = function(projects) {
+            let today = new Date().toLocaleDateString();
+            let totalSecondsToday = 0;
+            timeLogsData.forEach(log => {
+                let logDate = new Date(log.date).toLocaleDateString();
+                if (logDate === today) {
+                    totalSecondsToday += log.duration;
+                }
+            });
+
+            document.getElementById('todayTime').textContent = formatTime(totalSecondsToday);
+            
+            let totalOverall = projects.reduce((sum, p) => sum + (p.totalTime || 0), 0);
+            
+            let languageTimes = {};
+            timeLogsData.forEach(log => {
+                languageTimes[log.language] = (languageTimes[log.language] || 0) + log.duration;
+            });
+
+            const languageContainer = document.getElementById('languagesTime');
+            languageContainer.innerHTML = '';
+            for (const lang in languageTimes) {
+                const langEl = document.createElement('div');
+                langEl.className = 'flex justify-between items-center';
+                langEl.innerHTML = `
+                    <span><i class="fab fa-${getLanguageIcon(lang)} mr-2 text-${getLanguageColor(lang)}-400"></i>${lang}</span>
+                    <span class="text-secondary">${formatTime(languageTimes[lang])}</span>
+                `;
+                languageContainer.appendChild(langEl);
+            }
+            
+            // Weekly goal (hardcoded for now)
+            const weeklyGoal = 20 * 3600; // 20 hours in seconds
+            const progressPercentage = Math.min(100, Math.round((totalSecondsToday / weeklyGoal) * 100));
+            document.getElementById('weeklyGoal').textContent = formatTime(weeklyGoal);
+            document.getElementById('progressBar').style.width = `${progressPercentage}%`;
+            document.getElementById('progressText').textContent = `${progressPercentage}% of weekly goal completed`;
+        }
+        
+        function formatTime(totalSeconds) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            return `${hours}h ${minutes}m`;
+        }
+
+        function getLanguageIcon(lang) {
+            switch(lang.toLowerCase()) {
+                case 'javascript': return 'js-square';
+                case 'python': return 'python';
+                case 'html': return 'html5';
+                case 'css': return 'css3-alt';
+                case 'java': return 'java';
+                default: return 'code';
+            }
+        }
+        
+        function getLanguageColor(lang) {
+            switch(lang.toLowerCase()) {
+                case 'javascript': return 'yellow';
+                case 'python': return 'blue';
+                case 'html': return 'orange';
+                case 'css': return 'blue';
+                case 'java': return 'red';
+                default: return 'gray';
+            }
+        }
+
+        // Add Project Modal
+        window.showAddProjectModal = function() {
+            document.getElementById('addProjectModal').classList.remove('hidden');
+        }
+
+        window.hideAddProjectModal = function() {
+            document.getElementById('addProjectModal').classList.add('hidden');
+        }
+
+        window.addProject = async function() {
+            const projectName = document.getElementById('newProjectName').value;
+            const projectLanguage = document.getElementById('newProjectLang').value;
+            if (!projectName || !projectLanguage) {
+                document.getElementById('projectModalError').textContent = "Please fill in all fields.";
+                return;
+            }
+            try {
+                await addDoc(collection(db, getCollectionPath('projects')), {
+                    name: projectName,
+                    language: projectLanguage,
+                    totalTime: 0,
+                    createdAt: Date.now()
+                });
+                document.getElementById('newProjectName').value = '';
+                document.getElementById('newProjectLang').value = '';
+                hideAddProjectModal();
+            } catch (e) {
+                console.error("Error adding document: ", e);
+                document.getElementById('projectModalError').textContent = "Error adding project. See console for details.";
+            }
+        }
+
+        // Add Goal Modal
+        window.showAddGoalModal = function() {
+            document.getElementById('addGoalModal').classList.remove('hidden');
+        }
+
+        window.hideAddGoalModal = function() {
+            document.getElementById('addGoalModal').classList.add('hidden');
+        }
+
+        window.addGoal = async function() {
+            const goalText = document.getElementById('newGoalText').value;
+            if (!goalText) {
+                document.getElementById('goalModalError').textContent = "Please enter a goal.";
+                return;
+            }
+            try {
+                await addDoc(collection(db, getCollectionPath('goals')), {
+                    text: goalText,
+                    completed: false,
+                    createdAt: Date.now()
+                });
+                document.getElementById('newGoalText').value = '';
+                hideAddGoalModal();
+            } catch (e) {
+                console.error("Error adding goal: ", e);
+                document.getElementById('goalModalError').textContent = "Error adding goal. See console for details.";
+            }
+        }
+
+        window.toggleGoalCompletion = async function(goalId, isCompleted) {
+            const goalRef = doc(db, getCollectionPath('goals'), goalId);
+            try {
+                await updateDoc(goalRef, { completed: isCompleted });
+            } catch (e) {
+                console.error("Error updating goal: ", e);
+            }
+        }
+
+        window.deleteGoal = async function(goalId) {
+            const goalRef = doc(db, getCollectionPath('goals'), goalId);
+            try {
+                await deleteDoc(goalRef);
+            } catch (e) {
+                console.error("Error deleting goal: ", e);
+            }
+        }
+        
+        let timerInterval;
+        let isRunning = false;
+        let startTime = 0;
+        let pausedTime = 0; // New variable to store elapsed time when paused
+        let currentProjectId = null;
+        let currentProjectName = '';
+
+        window.updateTimerDisplay = function() {
+            const display = document.getElementById('timerDisplay');
+            let elapsedSeconds = isRunning ? Math.floor((Date.now() - startTime) / 1000) : pausedTime;
+            const hours = Math.floor(elapsedSeconds / 3600);
+            const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+            const secs = elapsedSeconds % 60;
+            display.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        window.startTimer = function() {
+            if (isRunning) return;
+            const projectName = document.getElementById('projectName').value;
+            if (!projectName) {
+                document.getElementById('status').textContent = "Please select a project to start the timer.";
+                return;
+            }
+
+            const project = projectsData.find(p => p.name === projectName);
+            if (!project) {
+                document.getElementById('status').textContent = "Project not found. Please select an existing project from the list.";
+                return;
+            }
+
+            currentProjectId = project.id;
+            currentProjectName = project.name;
+            startTime = Date.now() - (pausedTime * 1000); // Resume from where it left off
+            isRunning = true;
+            document.getElementById('status').textContent = `Timer started for "${currentProjectName}"`;
+            document.getElementById('projectName').disabled = true;
+            timerInterval = setInterval(updateTimerDisplay, 1000);
+        }
+
+        window.stopTimer = async function() {
+            if (!isRunning && pausedTime === 0) return; // Don't stop if nothing is running or paused
+            clearInterval(timerInterval);
+            
+            const durationSeconds = isRunning ? Math.floor((Date.now() - startTime) / 1000) : pausedTime;
+
+            if (durationSeconds > 0 && currentProjectId) {
+                try {
+                    // Add time log entry
+                    await addDoc(collection(db, getCollectionPath('timeLogs')), {
+                        projectName: currentProjectName,
+                        duration: durationSeconds,
+                        language: 'Mixed', // Assuming mixed languages for now
+                        date: Date.now()
+                    });
+
+                    // Update total time on the project document
+                    const projectRef = doc(db, getCollectionPath('projects'), currentProjectId);
+                    const projectDoc = await getDoc(projectRef);
+                    const currentTotalTime = projectDoc.data().totalTime || 0;
+                    await updateDoc(projectRef, { totalTime: currentTotalTime + durationSeconds });
+
+                    document.getElementById('status').textContent = `Stopped. Logged ${formatTime(durationSeconds)} for "${currentProjectName}".`;
+                } catch (e) {
+                    console.error("Error stopping timer or saving data: ", e);
+                    document.getElementById('status').textContent = "Error saving time log. See console for details.";
+                }
+            } else {
+                 document.getElementById('status').textContent = "Timer stopped.";
+            }
+
+            // Reset all timer state variables
+            isRunning = false;
+            pausedTime = 0;
+            currentProjectId = null;
+            currentProjectName = '';
+            document.getElementById('projectName').value = '';
+            document.getElementById('projectName').disabled = false;
+            updateTimerDisplay();
+        }
+
+        window.pauseTimer = function() {
+            if (!isRunning) return;
+            clearInterval(timerInterval);
+            const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+            pausedTime = durationSeconds; // Store the elapsed time
+            isRunning = false;
+            document.getElementById('status').textContent = `Timer paused for "${currentProjectName}".`;
+            document.getElementById('projectName').disabled = false; // Re-enable input on pause
+            updateTimerDisplay();
+        }
+
+        window.searchProjects = function() {
+            const searchTerm = document.getElementById('searchBar').value.toLowerCase();
+            const filteredProjects = projectsData.filter(p => p.name.toLowerCase().includes(searchTerm) || (p.language && p.language.toLowerCase().includes(searchTerm)));
+            renderProjects(filteredProjects);
+        }
+        
+        window.toggleTheme = function() {
+            const body = document.body;
+            if (body.classList.contains('theme-black')) {
+                body.classList.remove('theme-black');
+                body.classList.add('theme-dark-red');
+            } else {
+                body.classList.remove('theme-dark-red');
+                body.classList.add('theme-black');
+            }
+        }
+        
+        window.updateClock = function() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            document.getElementById('digitalClock').textContent = timeString;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeFirebase();
+            setInterval(updateClock, 1000);
+            updateTimerDisplay();
+
+            document.getElementById('startTimer').addEventListener('click', startTimer);
+            document.getElementById('pauseTimer').addEventListener('click', pauseTimer);
+            document.getElementById('stopTimer').addEventListener('click', stopTimer);
+            document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+            document.getElementById('searchBar').addEventListener('input', searchProjects);
+        });
+
+    </script>
+</head>
+<body class="theme-black">
+    <!-- Main UI -->
+    <nav class="bg-secondary border-b border-custom p-4">
+        <div class="container mx-auto flex flex-col md:flex-row justify-between items-center">
+            <div class="flex items-center space-x-4 mb-4 md:mb-0">
+                <h1 class="text-xl font-bold accent-color">
+                    <i class="fas fa-code mr-2"></i>Programming Tracksheet
+                </h1>
+                <div class="clock-display text-secondary" id="digitalClock"></div>
+            </div>
+            
+            <div class="flex flex-col md:flex-row items-center space-y-2 md:space-y-0 md:space-x-4">
+                <div class="relative">
+                    <input type="text" placeholder="Search projects..." class="input-field pl-10 w-64" id="searchBar">
+                    <i class="fas fa-search absolute left-3 top-3 text-secondary"></i>
+                </div>
+                
+                <button class="btn-primary flex items-center space-x-2" id="themeToggle">
+                    <i class="fas fa-palette"></i>
+                    <span>Theme</span>
+                </button>
+            </div>
+        </div>
+        <p class="text-xs text-center text-secondary mt-2">
+            User ID: <span id="userIdDisplay">Loading...</span>
+        </p>
+    </nav>
+
+    <div class="container mx-auto p-4 max-w-7xl">
+        <p id="status" class="text-center my-4"></p>
+        <!-- Timer Section -->
+        <div class="card mb-6">
+            <div class="flex flex-col lg:flex-row justify-between items-center">
+                <div class="mb-4 lg:mb-0">
+                    <h2 class="text-2xl font-bold mb-2 accent-color">
+                        <i class="fas fa-stopwatch mr-2"></i>Coding Timer
+                    </h2>
+                    <div class="timer-display accent-color" id="timerDisplay">00:00:00</div>
+                </div>
+                
+                <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+                    <input type="text" placeholder="Enter project name..." class="input-field" id="projectName" list="projectList">
+                    <datalist id="projectList">
+                        <!-- Options will be populated by JS -->
+                    </datalist>
+                    <button class="btn-primary" id="startTimer">
+                        <i class="fas fa-play mr-2"></i>Start
+                    </button>
+                    <button class="btn-primary" id="pauseTimer">
+                        <i class="fas fa-pause mr-2"></i>Pause
+                    </button>
+                    <button class="btn-primary" id="stopTimer">
+                        <i class="fas fa-stop mr-2"></i>Stop
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            <!-- Current Projects -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-laptop-code mr-2"></i>Current Projects
+                </h3>
+                <div id="currentProjects">
+                    <!-- Projects populated by JS -->
+                </div>
+                <button class="btn-primary w-full mt-4" onclick="showAddProjectModal()">
+                    <i class="fas fa-plus mr-2"></i>Add Project
+                </button>
+            </div>
+
+            <!-- Programming Languages -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-code mr-2"></i>Languages & Time
+                </h3>
+                <div class="space-y-3" id="languagesTime">
+                    <!-- Languages & time populated by JS -->
+                </div>
+            </div>
+
+            <!-- Learning Goals -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-target mr-2"></i>Learning Goals
+                </h3>
+                <div class="space-y-3" id="learningGoals">
+                    <!-- Goals populated by JS -->
+                </div>
+                <button class="btn-primary w-full mt-4" onclick="showAddGoalModal()">
+                    <i class="fas fa-plus mr-2"></i>Add Goal
+                </button>
+            </div>
+
+            <!-- Daily Progress -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-chart-line mr-2"></i>Daily Progress
+                </h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between">
+                        <span>Today's Coding Time:</span>
+                        <span class="accent-color font-bold" id="todayTime">Loading...</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Weekly Goal:</span>
+                        <span class="text-secondary" id="weeklyGoal">Loading...</span>
+                    </div>
+                    <div class="w-full bg-accent rounded-full h-2">
+                        <div class="bg-green-500 h-2 rounded-full" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="text-sm text-secondary" id="progressText">0% of weekly goal completed</div>
+                </div>
+            </div>
+
+            <!-- Resources -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-book mr-2"></i>Resources
+                </h3>
+                <div class="space-y-2">
+                    <a href="https://developer.mozilla.org/en-US/docs/Web" target="_blank" class="block text-blue-400 hover:underline">
+                        <i class="fas fa-external-link-alt mr-2"></i>MDN Web Docs
+                    </a>
+                    <a href="https://stackoverflow.com/" target="_blank" class="block text-blue-400 hover:underline">
+                        <i class="fas fa-external-link-alt mr-2"></i>Stack Overflow
+                    </a>
+                    <a href="https://github.com/" target="_blank" class="block text-blue-400 hover:underline">
+                        <i class="fas fa-external-link-alt mr-2"></i>GitHub
+                    </a>
+                    <a href="https://www.freecodecamp.org/" target="_blank" class="block text-blue-400 hover:underline">
+                        <i class="fas fa-external-link-alt mr-2"></i>FreeCodeCamp
+                    </a>
+                </div>
+            </div>
+
+            <!-- Quick Notes -->
+            <div class="card">
+                <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-sticky-note mr-2"></i>Quick Notes
+                </h3>
+                <textarea class="input-field h-32 resize-none" placeholder="Add your programming notes here..."></textarea>
+                <button class="btn-primary w-full mt-4">
+                    <i class="fas fa-save mr-2"></i>Save Notes
+                </button>
+            </div>
+        </div>
+
+        <!-- Time Log -->
+        <div class="card mt-6">
+            <h3 class="text-xl font-bold mb-4 accent-color">
+                    <i class="fas fa-history mr-2"></i>Time Log
+            </h3>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-custom">
+                            <th class="text-left p-2">Project</th>
+                            <th class="text-left p-2">Language</th>
+                            <th class="text-left p-2">Duration</th>
+                            <th class="text-left p-2">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="timeLog">
+                        <!-- Time logs populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <!-- Add Project Modal -->
+    <div id="addProjectModal" class="modal fixed inset-0 flex items-center justify-center z-50">
+        <div class="modal-overlay absolute w-full h-full bg-gray-900 opacity-90"></div>
+        <div class="modal-container bg-secondary w-11/12 md:max-w-md mx-auto rounded shadow-lg z-50 overflow-y-auto">
+            <div class="modal-content py-4 text-left px-6">
+                <div class="flex justify-between items-center pb-3">
+                    <p class="text-2xl font-bold">Add New Project</p>
+                    <div class="modal-close cursor-pointer z-50" onclick="hideAddProjectModal()">
+                        <svg class="fill-current text-primary" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+                            <path d="M14.53 4.53l-1.06-1.06L9 7.94 4.53 3.47 3.47 4.53 7.94 9l-4.47 4.47 1.06 1.06L9 10.06l4.47 4.47 1.06-1.06L10.06 9z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2">Project Name</label>
+                    <input type="text" id="newProjectName" class="input-field">
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2">Language (e.g. Python, JS)</label>
+                    <input type="text" id="newProjectLang" class="input-field">
+                </div>
+                <p id="projectModalError" class="text-red-500 text-sm mb-4"></p>
+                <div class="flex justify-end">
+                    <button class="btn-primary" onclick="addProject()">Save Project</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Goal Modal -->
+    <div id="addGoalModal" class="modal fixed inset-0 flex items-center justify-center z-50">
+        <div class="modal-overlay absolute w-full h-full bg-gray-900 opacity-90"></div>
+        <div class="modal-container bg-secondary w-11/12 md:max-w-md mx-auto rounded shadow-lg z-50 overflow-y-auto">
+            <div class="modal-content py-4 text-left px-6">
+                <div class="flex justify-between items-center pb-3">
+                    <p class="text-2xl font-bold">Add New Goal</p>
+                    <div class="modal-close cursor-pointer z-50" onclick="hideAddGoalModal()">
+                        <svg class="fill-current text-primary" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+                            <path d="M14.53 4.53l-1.06-1.06L9 7.94 4.53 3.47 3.47 4.53 7.94 9l-4.47 4.47 1.06 1.06L9 10.06l4.47 4.47 1.06-1.06L10.06 9z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2">Learning Goal</label>
+                    <input type="text" id="newGoalText" class="input-field">
+                </div>
+                <p id="goalModalError" class="text-red-500 text-sm mb-4"></p>
+                <div class="flex justify-end">
+                    <button class="btn-primary" onclick="addGoal()">Save Goal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Footer -->
+    <footer class="bg-secondary border-t border-custom mt-12 p-6">
+        <div class="container mx-auto">
+            <div class="text-center text-secondary text-sm mt-4 pt-4 border-t border-custom">
+                © 2024 Programming Tracksheet. Built for developers, by developers.
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
